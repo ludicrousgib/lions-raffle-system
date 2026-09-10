@@ -2,7 +2,7 @@
 
 ## Product goal
 
-A mobile-first web app for running one in-person Lions raffle from seller phones. The app handles ticket allocation, simulated printing, voids, drawing and history; payment remains in Square. The MVP must work as a convincing single-device demo now and include a Supabase/Postgres model for later authoritative multi-device sync.
+A mobile-first web app for running one in-person Lions raffle from seller phones. The app handles ticket allocation, simulated printing, voids, drawing and history; payment is collected separately (no Square integration). The live MVP uses Supabase for authoritative persistence and shared-device updates.
 
 ## Locked MVP decisions
 
@@ -61,13 +61,19 @@ A mobile-first web app for running one in-person Lions raffle from seller phones
 ## Data and delivery architecture
 
 - Next.js App Router application, mobile-first and suitable for Vercel.
-- Demo mode persists on one device and implements the same domain rules locally for immediate use.
-- Supabase schema and Postgres functions provide the production path for authoritative, atomic reservations, idempotency, expiry cleanup and exact-pool drawing.
+- All UI changes go through the server; no localStorage selling fallback.
+- A private, versioned Supabase JSONB aggregate is updated using atomic compare-and-swap. Contending commands reload and recompute; only committed responses are shown. This serializes reservations, printing, voids, draws and active-raffle creation together.
+- Opaque HttpOnly device cookies, server-stored roles, salted PIN hashes, persistent PIN rate limits and idempotency receipts protect server actions. The service key stays server-only. Devices refresh shared state every three seconds.
 - No offline selling: production selling must pause when the authoritative backend cannot be reached.
 
 ## Post-MVP decisions to revisit
 
-- Connect Supabase as the default live store and validate simultaneous allocation across multiple physical phones.
+Implementation edge cases: settings changes wait for active reservations to be cancelled or expired; a sale containing a confirmed winner cannot be voided; an exhausted redraw resolves the rejected candidate and permits returning to Selling. Undo is available in Draw mode after resolving any candidate. Voiding the latest sale does not expose an earlier sale as a new undo target.
+
+Brand implementation uses Lions blue `#00338D`, yellow `#EBB700`, purple `#7A2582`, navy `#0D2240` and Roboto from the supplied guidelines. The generic ticket icon is not a Lions emblem; do not imitate or modify the official logo.
+
+- Load-test the live aggregate beyond club scale, consider a normalized relational model, and verify simultaneous use on multiple physical phones and networks.
+- Review resource caps, PIN protections, backups, retention, audit logging and public create/delete access before operational use.
 - Integrate and test the Epson TM-P20II-801 across Bluetooth/Wi-Fi, iPhone and Android; complete a sale only after a real printer success response.
 - Add a configurable club name instead of the fixed Green Point–Avoca name.
 - Reconsider separate admin permissions/PIN and stronger deletion authorization.

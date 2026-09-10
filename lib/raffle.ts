@@ -107,11 +107,12 @@ export function id(prefix: string) {
 
 export function validateDraft(draft: RaffleDraft): string | null {
   if (!draft.name.trim()) return "Enter a raffle name.";
+  if (draft.name.length > 100) return "Keep the raffle name under 100 characters.";
   if (!/^\d{4}$/.test(draft.pin)) return "PIN must be exactly four digits.";
-  if (!Number.isInteger(draft.startingTicket) || draft.startingTicket < 1) return "Starting ticket must be a whole number greater than zero.";
-  if (!Number.isInteger(draft.prizeCount) || draft.prizeCount < 1) return "Enter at least one prize.";
+  if (!Number.isSafeInteger(draft.startingTicket) || draft.startingTicket < 1 || draft.startingTicket > 1000000000) return "Starting ticket must be a whole number from 1 to 1 billion.";
+  if (!Number.isInteger(draft.prizeCount) || draft.prizeCount < 1 || draft.prizeCount > 1000) return "Enter between 1 and 1,000 prizes.";
   if (draft.bundles.length !== 3) return "Exactly three bundles are required.";
-  if (draft.bundles.some((bundle) => !Number.isInteger(bundle.quantity) || bundle.quantity < 1 || !Number.isFinite(bundle.price) || bundle.price <= 0)) {
+  if (draft.bundles.some((bundle) => !bundle || !Number.isInteger(bundle.quantity) || bundle.quantity < 1 || bundle.quantity > 1000 || !Number.isFinite(bundle.price) || bundle.price <= 0 || bundle.price > 10000 || Math.abs(bundle.price * 100 - Math.round(bundle.price * 100)) > 0.00001)) {
     return "Every bundle needs a valid quantity and price.";
   }
   return null;
@@ -167,6 +168,7 @@ export function reserveBundle(raffle: Raffle, sellerId: string, bundleId: string
   }
   const bundle = raffle.bundles.find((item) => item.id === bundleId);
   if (!bundle) throw new Error("That bundle is no longer available.");
+  if (raffle.highestIssued - raffle.startingTicket + bundle.quantity > 100000) throw new Error("This MVP supports up to 100,000 issued tickets per raffle.");
 
   const occupied = new Set<number>();
   for (const reservation of raffle.reservations) {
@@ -224,6 +226,7 @@ export function cancelReservation(raffle: Raffle, reservationId: string) {
 
 export function latestCompletedSaleForSeller(raffle: Raffle, sellerId: string) {
   const latestFinalized = raffle.reservations
+    .slice().reverse()
     .filter((sale) => sale.sellerId === sellerId && (sale.status === "completed" || sale.status === "voided"))
     .sort((a, b) => new Date(b.completedAt ?? b.createdAt).getTime() - new Date(a.completedAt ?? a.createdAt).getTime())[0];
   return latestFinalized?.status === "completed" ? latestFinalized : undefined;
@@ -233,9 +236,9 @@ export function voidLatestSale(raffle: Raffle, sellerId: string, reservationId: 
   if (raffle.status !== "selling") throw new Error("Sales cannot be voided while drawing is underway.");
   const latest = latestCompletedSaleForSeller(raffle, sellerId);
   if (!latest || latest.id !== reservationId) throw new Error("Only this seller’s most recent completed sale can be voided.");
-  const drawnTickets = new Set(raffle.drawEvents.map((event) => event.ticketNumber));
+  const drawnTickets = new Set(raffle.winners.map((winner) => winner.ticketNumber));
   if (latest.ticketNumbers.some((ticket) => drawnTickets.has(ticket))) {
-    throw new Error("This sale contains a previously drawn ticket and cannot be voided.");
+    throw new Error("This sale contains a confirmed winning ticket and cannot be voided.");
   }
   latest.status = "voided";
   latest.voidedAt = at.toISOString();
@@ -326,6 +329,7 @@ export function startDraw(raffle: Raffle, at = new Date()) {
 }
 
 export function returnToSelling(raffle: Raffle) {
+  if (raffle.status === "ended") throw new Error("This raffle is permanently ended.");
   if (currentCandidate(raffle)) throw new Error("Confirm or redraw the current candidate before returning to Selling.");
   raffle.status = "selling";
 }
@@ -350,6 +354,7 @@ export function drawCandidate(raffle: Raffle, prizeNumber = nextUnfilledPrize(ra
 }
 
 export function confirmWinner(raffle: Raffle, at = new Date()) {
+  if (raffle.status !== "drawing") throw new Error("Start Draw first.");
   const candidate = currentCandidate(raffle);
   if (!candidate) throw new Error("There is no candidate to confirm.");
   candidate.outcome = "confirmed";
@@ -364,16 +369,21 @@ export function confirmWinner(raffle: Raffle, at = new Date()) {
 }
 
 export function redrawCandidate(raffle: Raffle, at = new Date()) {
+  if (raffle.status !== "drawing") throw new Error("Start Draw first.");
   const candidate = currentCandidate(raffle);
   if (!candidate) throw new Error("There is no candidate to redraw.");
   const prize = candidate.prizeNumber;
   candidate.outcome = "redrawn";
   candidate.resolvedAt = at.toISOString();
   delete raffle.currentCandidateId;
+  const excluded = new Set(raffle.drawEvents.map(event => event.ticketNumber));
+  if (!validSales(raffle).some(sale => sale.ticketNumbers.some(ticket => !excluded.has(ticket)))) return undefined;
   return drawCandidate(raffle, prize, at);
 }
 
 export function undoWinner(raffle: Raffle, winnerId: string, at = new Date()) {
+  if (raffle.status !== "drawing") throw new Error("Start Draw before undoing a winner.");
+  if (currentCandidate(raffle)) throw new Error("Resolve the current candidate first.");
   const winner = raffle.winners.find((item) => item.id === winnerId);
   if (!winner) throw new Error("Winner not found.");
   const drawEvent = raffle.drawEvents.find((event) => event.prizeNumber === winner.prizeNumber && event.ticketNumber === winner.ticketNumber && event.outcome === "confirmed");
@@ -385,6 +395,7 @@ export function undoWinner(raffle: Raffle, winnerId: string, at = new Date()) {
 }
 
 export function endRaffle(raffle: Raffle, at = new Date()) {
+  if (raffle.status !== "drawing") throw new Error("Finish the draw before ending the raffle.");
   if (raffle.winners.length !== raffle.prizeCount) throw new Error("Confirm a winner for every prize before ending the raffle.");
   if (currentCandidate(raffle)) throw new Error("Resolve the current candidate first.");
   raffle.status = "ended";

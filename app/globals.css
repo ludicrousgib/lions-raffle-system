@@ -1,6 +1,6 @@
 :root {
   --ink: #0d2240;
-  --muted: #5b5a5a;
+  --muted: #55565a;
   --paper: #ffffff;
   --canvas: #f4f4f4;
   --line: #d8d8d7;
@@ -157,7 +157,7 @@ button { color: inherit; }
 .notice strong { color: inherit; }
 .notice p { margin: 0.35rem 0 0; }
 .notice-warning { color: #704007; background: var(--warning-soft); border-color: #efd492; }
-.notice-success { display: flex; align-items: center; gap: 0.5rem; color: var(--green); background: var(--green-soft); border-color: #b8dfcc; }
+.notice-success { display: flex; align-items: center; gap: 0.5rem; color: var(--ink); background: var(--green-soft); border-color: #b8dfcc; }
 .notice-title { display: flex; align-items: center; gap: 0.45rem; }
 
 .access-page { padding-top: 2.5rem; display: flex; flex-direction: column; align-items: center; text-align: center; }
@@ -207,7 +207,7 @@ button { color: inherit; }
 .paper-ticket::before { left: -0.8rem; }
 .paper-ticket::after { right: -0.8rem; }
 .ticket-top span { display: block; color: var(--red); font-size: 0.72rem; font-weight: 900; letter-spacing: 0.055em; text-transform: uppercase; }
-.ticket-top h2 { margin: 0.45rem 0 0.25rem; font-family: Georgia, "Times New Roman", serif; font-size: 1.55rem; }
+.ticket-top h2 { margin: 0.45rem 0 0.25rem; font-family: inherit; font-size: 1.55rem; }
 .ticket-top time { color: var(--muted); font-size: 0.78rem; }
 .ticket-range { margin: 1.25rem -1rem 0; padding: 1.15rem 1rem; display: grid; gap: 0.3rem; color: white; background: var(--blue); }
 .ticket-range span { color: #c9d9e4; font-size: 0.72rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
@@ -320,3 +320,6 @@ button { color: inherit; }
   .ticket-page { padding: 0; }
   .paper-ticket { border: 0; box-shadow: none; }
 }
+:root { color-scheme: light; }
+.app-interactions { border: 0; margin: 0; padding: 0; min-width: 0; }
+.connection-banner { padding: 14px 20px; background: #fff0bd; color: #0d2240; font-size: 14px; }

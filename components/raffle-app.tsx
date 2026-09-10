@@ -19,38 +19,25 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CLUB_NAME,
   DemoState,
   Raffle,
   RaffleDraft,
-  cancelReservation,
-  completePrint,
-  confirmWinner,
-  createRaffle,
   currentCandidate,
   defaultDraft,
-  drawCandidate,
   emptyState,
-  endRaffle,
-  expireReservations,
   formatDateTime,
   formatMoney,
   formatRanges,
   latestCompletedSaleForSeller,
   nextUnfilledPrize,
   raffleStats,
-  redrawCandidate,
-  reserveBundle,
-  returnToSelling,
-  startDraw,
-  undoWinner,
   validateDraft,
-  voidLatestSale,
 } from "@/lib/raffle";
 
-const STORAGE_KEY = "lions-raffle-demo-v1";
+type LiveResponse = { state: DemoState; revision: number; serverNow: number; adminRaffleId: string | null; result?: string | null; error?: string };
 type Screen = "home" | "create" | "edit" | "join" | "admin-pin" | "seller" | "confirm-sale" | "ticket" | "admin" | "history" | "summary";
 
 type ConfirmState = {
@@ -266,38 +253,42 @@ export function RaffleApp() {
   const [now, setNow] = useState(0);
   const [toast, setToast] = useState("");
   const [confirm, setConfirm] = useState<ConfirmState>(null);
+  const [busy, setBusy] = useState(false);
+  const [connectionError, setConnectionError] = useState("");
+  const revision = useRef(-1);
+  const inFlight = useRef(false);
+  const clockOffset = useRef(0);
+  const retryRequest = useRef<{ signature: string; requestId: string } | null>(null);
+
+  const accept = useCallback((data: LiveResponse) => {
+    if (data.revision < revision.current) return;
+    revision.current = data.revision;
+    clockOffset.current = data.serverNow - Date.now();
+    setNow(data.serverNow);
+    setState(data.state);
+    setConnectionError("");
+  }, []);
 
   useEffect(() => {
-    const load = window.setTimeout(() => {
+    let stopped = false;
+    const refresh = async () => {
+      if (inFlight.current) return;
       try {
-        const saved = localStorage.getItem(STORAGE_KEY);
-        if (saved) setState(JSON.parse(saved) as DemoState);
-      } catch {
-        setToast("Saved demo data could not be loaded.");
+        const res = await fetch("/api/raffle", { cache: "no-store" });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        if (!stopped) accept(data);
+      } catch (error) {
+        if (!stopped) setConnectionError(error instanceof Error ? error.message : "Connection lost. Reconnect before selling.");
       } finally {
-        setHydrated(true);
+        if (!stopped) setHydrated(true);
       }
-    }, 0);
-    return () => window.clearTimeout(load);
-  }, []);
-
-  useEffect(() => {
-    if (!hydrated) return;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [state, hydrated]);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      setNow(Date.now());
-      setState((current) => {
-        if (!current.activeRaffle) return current;
-        const next = clone(current);
-        const expired = expireReservations(next.activeRaffle!, new Date());
-        return expired ? next : current;
-      });
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, []);
+    };
+    void refresh();
+    const refreshTimer = window.setInterval(refresh, 3000);
+    const timer = window.setInterval(() => setNow(Date.now() + clockOffset.current), 1000);
+    return () => { stopped = true; window.clearInterval(timer); window.clearInterval(refreshTimer); };
+  }, [accept]);
 
   useEffect(() => {
     if (!toast) return;
@@ -356,21 +347,31 @@ export function RaffleApp() {
   const deviceSeller = raffle?.sellers.find((seller) => seller.id === deviceSellerId);
   const stats = useMemo(() => raffle ? raffleStats(raffle) : null, [raffle]);
 
-  function commit(next: DemoState) {
-    setState(next);
-  }
-
-  function mutateActive(action: (active: Raffle, next: DemoState) => void) {
-    if (!state.activeRaffle) return;
-    const next = clone(state);
+  const command = useCallback(async (action: string, values: Record<string, unknown> = {}, onSuccess?: (data: LiveResponse) => void) => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setBusy(true);
+    setFormError("");
+    const payload = { action, raffleId: state.activeRaffle?.id, ...values };
+    const signature = JSON.stringify(payload);
+    const requestId = retryRequest.current?.signature === signature ? retryRequest.current.requestId : crypto.randomUUID();
+    retryRequest.current = { signature, requestId };
     try {
-      action(next.activeRaffle!, next);
-      commit(next);
-      setFormError("");
+      const res = await fetch("/api/raffle", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...payload, requestId }) });
+      const data: LiveResponse = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "The action could not be saved.");
+      accept(data);
+      retryRequest.current = null;
+      onSuccess?.(data);
     } catch (error) {
-      setToast(error instanceof Error ? error.message : "Something went wrong.");
+      const message = error instanceof Error ? error.message : "Connection lost. Please retry; the same request will not create a duplicate sale.";
+      setFormError(message);
+      setToast(message);
+    } finally {
+      inFlight.current = false;
+      setBusy(false);
     }
-  }
+  }, [state.activeRaffle?.id, accept]);
 
   function goHome() {
     setScreen("home");
@@ -420,7 +421,7 @@ export function RaffleApp() {
             <span><History size={20} /> Raffle history</span>
             <span>{state.history.length}<ChevronRight size={19} /></span>
           </button>
-          <p className="demo-note"><span /> Single-device demo · Supabase-ready</p>
+          <p className="demo-note"><span /> Live shared raffle · Printing is simulated</p>
         </main>
       </>
     );
@@ -429,7 +430,7 @@ export function RaffleApp() {
   function renderCreate(editing = false) {
     const initial: RaffleDraft = editing && raffle ? {
       name: raffle.name,
-      pin: raffle.pin,
+      pin: "",
       startingTicket: raffle.startingTicket,
       prizeCount: raffle.prizeCount,
       bundles: raffle.bundles.map(({ quantity, price }) => ({ quantity, price })),
@@ -443,27 +444,10 @@ export function RaffleApp() {
             initial={initial}
             submitLabel={editing ? "Save settings" : "Create raffle"}
             onCancel={() => editing ? setScreen("admin") : goHome()}
-            onSubmit={(draft) => {
-              if (!editing) {
-                const next = clone(state);
-                next.activeRaffle = createRaffle(draft);
-                commit(next);
-                setToast("Raffle created.");
-                goHome();
-                return;
-              }
-              mutateActive((active) => {
-                if (active.settingsLocked) throw new Error("Settings locked after the first completed sale.");
-                active.name = draft.name.trim();
-                active.pin = draft.pin;
-                active.startingTicket = draft.startingTicket;
-                active.highestIssued = draft.startingTicket - 1;
-                active.prizeCount = draft.prizeCount;
-                active.bundles = draft.bundles.map((bundle, index) => ({ id: `bundle_${index + 1}`, ...bundle }));
-              });
-              setToast("Settings saved.");
-              setScreen("admin");
-            }}
+            onSubmit={(draft) => void command(editing ? "edit" : "create", { draft }, () => {
+              setToast(editing ? "Settings saved." : "Raffle created.");
+              if (editing) setScreen("admin"); else goHome();
+            })}
           />
         </main>
       </>
@@ -474,34 +458,12 @@ export function RaffleApp() {
     const submit = (event: FormEvent) => {
       event.preventDefault();
       if (!raffle) return;
-      if (pin !== raffle.pin) {
-        setFormError("That PIN does not match the active raffle.");
-        return;
-      }
-      if (admin) {
+      void command(admin ? "admin" : "join", { pin, name: sellerName }, () => {
         setPin("");
+        setSellerName("");
         setFormError("");
-        setScreen("admin");
-        return;
-      }
-      const cleanedName = sellerName.trim();
-      if (!cleanedName) {
-        setFormError("Enter your name.");
-        return;
-      }
-      if (raffle.sellers.some((seller) => seller.name.localeCompare(cleanedName, undefined, { sensitivity: "accent" }) === 0)) {
-        setFormError("That seller name is already being used in this raffle.");
-        return;
-      }
-      const next = clone(state);
-      const seller = { id: `seller_${crypto.randomUUID()}`, name: cleanedName, joinedAt: new Date().toISOString() };
-      next.activeRaffle!.sellers.push(seller);
-      next.deviceSellers[raffle.id] = seller.id;
-      commit(next);
-      setPin("");
-      setSellerName("");
-      setFormError("");
-      setScreen("seller");
+        setScreen(admin ? "admin" : "seller");
+      });
     };
     return (
       <>
@@ -564,7 +526,9 @@ export function RaffleApp() {
                   body: `Tickets ${formatRanges(lastSale.ticketNumbers)} will stop counting as sold and become available again.`,
                   label: "Void sale",
                   destructive: true,
-                  action: () => mutateActive((active) => voidLatestSale(active, deviceSeller.id, lastSale.id)),
+                  // This closure runs on confirmation, never while rendering.
+                  // eslint-disable-next-line react-hooks/refs
+                  action: () => void command("void", { targetId: lastSale.id }),
                 })}><Trash2 size={18} /> Void sale</Button>
               </div>
             </section>
@@ -592,9 +556,8 @@ export function RaffleApp() {
           <Notice>Ticket numbers are reserved only when you press Confirm. The reservation then lasts two minutes while you print.</Notice>
           <div className="sticky-actions">
             <Button variant="secondary" onClick={() => setScreen("seller")}>Cancel</Button>
-            <Button onClick={() => mutateActive((active) => {
-              const reservation = reserveBundle(active, deviceSeller.id, bundle.id);
-              setSelectedReservationId(reservation.id);
+            <Button onClick={() => void command("reserve", { targetId: bundle.id }, (data) => {
+              setSelectedReservationId(data.result!);
               setScreen("ticket");
             })}>Confirm sale</Button>
           </div>
@@ -615,7 +578,7 @@ export function RaffleApp() {
       <>
         <Header eyebrow={isCompleted ? "Sale complete" : "Reserved"} title="Customer ticket" onBack={isCompleted ? () => setScreen("seller") : undefined} action={isActive ? <span className="countdown"><Clock3 size={15} /> {Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, "0")}</span> : undefined} />
         <main className="page ticket-page">
-          {!isActive && !isCompleted && <Notice tone="warning">This unprinted reservation expired. Its ticket numbers are available for another sale.</Notice>}
+          {!isActive && !isCompleted && <Notice tone="warning">This ticket is {reservation.status}. Its numbers are no longer valid for this purchase.</Notice>}
           <article className="paper-ticket">
             <div className="ticket-top">
               <span>{CLUB_NAME}</span>
@@ -638,14 +601,18 @@ export function RaffleApp() {
           {isActive && <Notice tone="warning"><strong>Not sold yet.</strong> Printing completes and locks this sale.</Notice>}
           {isCompleted && <Notice tone="success"><Check size={18} /> Printed successfully · sale locked</Notice>}
           <div className="ticket-actions">
-            {isActive && <Button variant="secondary" onClick={() => mutateActive((active) => { cancelReservation(active, reservation.id); setScreen("seller"); })}><X size={18} /> Cancel</Button>}
-            {(isActive || isCompleted) && <Button onClick={() => mutateActive((active) => {
-              const sale = completePrint(active, reservation.id);
-              setToast(isCompleted ? `Reprint ${sale.printCount} simulated.` : "Print simulated — sale completed.");
+            {isActive && <Button variant="secondary" onClick={() => void command("cancel", { targetId: reservation.id }, () => setScreen("seller"))}><X size={18} /> Cancel</Button>}
+            {(isActive || isCompleted) && <Button onClick={() => void command("print", { targetId: reservation.id }, () => {
+              setToast(isCompleted ? "Reprint simulated." : "Print simulated — sale completed.");
             })}><Printer size={19} /> {isCompleted ? "Reprint" : "Print"}</Button>}
             {!isActive && !isCompleted && <Button onClick={() => setScreen("seller")}>Back to selling</Button>}
           </div>
           {isCompleted && <Button className="done-button" variant="secondary" onClick={() => setScreen("seller")}>Done</Button>}
+          {isActive && <Button variant="ghost" onClick={() => setToast("Print failed (simulation). The reservation remains active until the timer runs out. Retry Print.")}>Simulate failed print</Button>}
+          {isCompleted && deviceSeller && raffle.status === "selling" && latestCompletedSaleForSeller(raffle, deviceSeller.id)?.id === reservation.id && <Button variant="ghost" onClick={() => setConfirm({
+            title: "Void latest sale?", body: `Tickets ${formatRanges(reservation.ticketNumbers)} will be returned to available inventory.`, label: "Void sale", destructive: true,
+            action: () => void command("void", { targetId: reservation.id }, () => setScreen("seller")),
+          })}>Void this sale</Button>}
         </main>
       </>
     );
@@ -657,6 +624,8 @@ export function RaffleApp() {
     const candidate = currentCandidate(raffle);
     const nextPrize = nextUnfilledPrize(raffle);
     const allPrizesFilled = raffle.winners.length === raffle.prizeCount;
+    const excluded = new Set(raffle.drawEvents.map(event => event.ticketNumber));
+    const eligibleCount = raffle.reservations.filter(sale => sale.status === "completed").flatMap(sale => sale.ticketNumbers).filter(ticket => !excluded.has(ticket)).length;
     return (
       <>
         <Header eyebrow={raffle.name} title="Admin" onBack={goHome} action={<StatusPill status={raffle.status} />} />
@@ -679,13 +648,13 @@ export function RaffleApp() {
             <section className="draw-cta">
               <div><span>When selling is finished</span><h2>Start the draw</h2><p>Sales and voids pause until you return to Selling.</p></div>
               {pending.length > 0 && <Notice tone="warning">{pending.length} unprinted {pending.length === 1 ? "reservation is" : "reservations are"} still active.</Notice>}
-              <Button disabled={pending.length > 0 || stats.totalTickets === 0} onClick={() => mutateActive((active) => startDraw(active))}><Trophy size={20} /> Start Draw</Button>
+              <Button disabled={pending.length > 0 || stats.totalTickets === 0} onClick={() => void command("start")}><Trophy size={20} /> Start Draw</Button>
             </section>
           ) : (
             <section className="draw-stage">
               <div className="draw-stage-head">
                 <div><span>Drawing now</span><h2>{candidate ? `Prize ${candidate.prizeNumber}` : nextPrize ? `Prize ${nextPrize}` : "All prizes filled"}</h2></div>
-                <Button variant="ghost" disabled={Boolean(candidate)} onClick={() => mutateActive((active) => returnToSelling(active))}>Return to Selling</Button>
+                <Button variant="ghost" disabled={Boolean(candidate)} onClick={() => void command("selling")}>Return to Selling</Button>
               </div>
               {candidate ? (
                 <div className="candidate-card">
@@ -693,28 +662,22 @@ export function RaffleApp() {
                   <strong>{candidate.ticketNumber}</strong>
                   <p>Wait for the ticket holder to claim this prize.</p>
                   <div className="candidate-actions">
-                    <Button variant="secondary" onClick={() => mutateActive((active) => redrawCandidate(active))}><RotateCcw size={18} /> Redraw</Button>
-                    <Button onClick={() => mutateActive((active) => confirmWinner(active))}><Check size={19} /> Confirm winner</Button>
+                    <Button variant="secondary" onClick={() => void command("redraw", { targetId: candidate.id })}><RotateCcw size={18} /> Redraw</Button>
+                    <Button onClick={() => void command("confirm", { targetId: candidate.id })}><Check size={19} /> Confirm winner</Button>
                   </div>
                 </div>
               ) : !allPrizesFilled ? (
-                <div className="draw-ready"><Trophy size={35} /><p>Ready to choose from {stats.totalTickets - raffle.drawEvents.length} eligible tickets.</p><Button onClick={() => mutateActive((active) => drawCandidate(active))}>Draw candidate</Button></div>
+                <div className="draw-ready"><Trophy size={35} /><p>{eligibleCount ? `Ready to choose from ${eligibleCount} eligible tickets.` : "No eligible tickets remain. Return to Selling to add tickets for the remaining prizes."}</p><Button disabled={eligibleCount === 0} onClick={() => void command("draw")}>Draw candidate</Button></div>
               ) : (
                 <div className="draw-ready complete"><Check size={35} /><h3>Every prize is filled</h3><p>Review the winners, then end the raffle.</p><Button onClick={() => setConfirm({
                   title: "End this raffle?",
                   body: "This is permanent for the MVP. The raffle will become read-only and move to History.",
                   label: "End raffle",
                   destructive: true,
-                  action: () => {
-                    const next = clone(state);
-                    endRaffle(next.activeRaffle!);
-                    const finished = next.activeRaffle!;
-                    next.history = [finished, ...next.history];
-                    next.activeRaffle = null;
-                    setSelectedHistoryId(finished.id);
-                    commit(next);
+                  action: () => void command("end", {}, (data) => {
+                    setSelectedHistoryId(data.result!);
                     setScreen("summary");
-                  },
+                  }),
                 })}>End raffle</Button></div>
               )}
             </section>
@@ -735,7 +698,7 @@ export function RaffleApp() {
                       body: `Ticket #${winner.ticketNumber} will stay excluded. Prize ${prizeNumber} will need a new draw.`,
                       label: "Undo winner",
                       destructive: true,
-                      action: () => mutateActive((active) => undoWinner(active, winner.id)),
+                      action: () => void command("undo", { targetId: winner.id }),
                     })}><RotateCcw size={17} /></button>}
                   </div>
                 );
@@ -780,11 +743,7 @@ export function RaffleApp() {
                       body: `${item.name} and its summary will be removed from History.`,
                       label: "Delete raffle",
                       destructive: true,
-                      action: () => {
-                        const next = clone(state);
-                        next.history = next.history.filter((raffleItem) => raffleItem.id !== item.id);
-                        commit(next);
-                      },
+                      action: () => void command("delete", { targetId: item.id }),
                     })}><Trash2 size={19} /></button>
                   </article>
                 );
@@ -824,7 +783,10 @@ export function RaffleApp() {
 
   return (
     <div className="app-shell">
-      {content}
+      {connectionError && <div className="connection-banner" role="alert">{connectionError} Changes need a working internet connection.</div>}
+      {formError && !["join", "admin-pin"].includes(screen) && <div className="connection-banner" role="alert">{formError}</div>}
+      <fieldset className="app-interactions" disabled={busy || Boolean(connectionError)}>{content}</fieldset>
+      {busy && <div className="toast" role="status">Saving securely…</div>}
       {toast && <div className="toast" role="status">{toast}</div>}
       <ConfirmDialog value={confirm} onClose={() => setConfirm(null)} />
     </div>

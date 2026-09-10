@@ -2,26 +2,41 @@
 
 Mobile-first Next.js MVP for the Lions Club of Green Point - Avoca. It covers raffle setup, seller joining, gap-reusing ticket allocation, two-minute print reservations, voids, draw/redraw/confirm/undo, final summaries and raffle history.
 
-## Run the demo
+## Run the live MVP
 
 ```bash
-npm install
-npm run dev
+npm ci
+npm run build
+npm start
 ```
 
-Open `http://localhost:3000`. Demo mode saves raffle data in the browser on one device. The Print action deliberately simulates a successful print and then completes the sale.
+Open `http://localhost:3000` after configuring Supabase below. The Print action deliberately simulates success and completes the sale. No money is processed. The app fails closed without a database connection: there is no browser-local or offline selling fallback.
 
-## Supabase / multi-device path
+## Supabase setup
 
-1. Create a Supabase project and apply `supabase/schema.sql` in the SQL editor.
-2. Copy `.env.example` to `.env.local` and add the project URL, anon key and server-only service-role key.
+1. Create a Supabase project and apply `supabase/live-schema.sql` in the SQL editor. Its final query verifies RLS and blocked anonymous access.
+2. Set the project URL and server-only service-role key from `.env.example` in `.env.local`. The frontend does not need an anon key.
 3. Keep `SUPABASE_SERVICE_ROLE_KEY` server-side only.
-4. Move the remaining UI actions from the demo store to server routes/RPCs before enabling multi-device selling.
+4. Configure the same two values in Vercel Production. Previews should use a separate database.
 
-The reservation endpoint at `POST /api/reservations` demonstrates the production boundary: it verifies the PIN server-side and calls the row-locking, idempotent `reserve_bundle` Postgres function. The function expires stale reservations, locks the raffle allocation row, consumes the lowest available gaps first and only then advances the high-water mark.
+`POST /api/raffle` accepts named commands, checks server-stored roles and ownership, and applies the domain rules on the server. PostgreSQL atomically updates a single versioned JSONB aggregate only if its revision matches. A concurrent loser reloads and recomputes. Allocation, print, void, draw and one-active-raffle creation therefore share one atomic boundary across Vercel instances. Idempotency receipts prevent duplicate submissions from issuing tickets twice. Three-second polling refreshes shared device state.
+
+Device identity is an opaque HttpOnly cookie. PINs are salted and hashed server-side and never returned to clients. PIN attempts are rate-limited in Postgres; database access is restricted to the server role.
+
+The aggregate deliberately favours an auditable transaction boundary for a small club. The earlier relational design in `supabase/schema.sql` is reference only, is not deployed, and must not be enabled alongside the live model. Normalising and load-testing beyond club scale remain follow-up work.
 
 ## Deploy to Vercel
 
-Import the repository in Vercel, add the same environment variables, and deploy with the default Next.js settings. Without Supabase environment variables the deployed app remains a single-device demo.
+Import the repository in Vercel, add the environment variables, and deploy with the default Next.js settings. Without Supabase configuration, selling is unavailable.
+
+## Verification and caveats
+
+Run `npm test`, `npm run lint` and `npm run build`.
+
+- Print/Reprint are simulations, not physical printing.
+- The agreed shared four-digit PIN is demo-level access control, not separate admin security.
+- Anyone with the public URL can create a raffle when none is active, view history and permanently delete completed history, as agreed for MVP.
+- Resource safeguards currently allow up to 1,000 tickets per bundle, 1,000 prizes, a starting number up to one billion and roughly 100,000 issued numbers per raffle. Review before larger events.
+- Check database availability before each event. Backups, monitoring and recovery need an operational plan before relying on this for real money.
 
 See `BUILD_SPEC.md` for the locked product decisions and post-MVP list.

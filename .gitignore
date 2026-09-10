@@ -1,0 +1,11 @@
+node_modules/
+.next/
+out/
+.vercel/
+.env
+.env.local
+*.log
+.DS_Store
+AGENTS.md
+tmp/
+Lions-Clubs-International-Organization-Brand-Guidelines_en.pdf

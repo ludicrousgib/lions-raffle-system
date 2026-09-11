@@ -1,26 +1,66 @@
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import {
-  type DemoState, type Raffle, type RaffleDraft, cancelReservation, completePrint,
-  confirmWinner, createRaffle, currentCandidate, drawCandidate, endRaffle,
-  expireReservations, redrawCandidate, reserveBundle, returnToSelling, startDraw,
-  undoWinner, validateDraft, voidLatestSale,
+  type Raffle,
+  type RaffleDraft,
+  cancelReservation,
+  completePrint,
+  confirmWinner,
+  currentCandidate,
+  drawCandidate,
+  endRaffle,
+  expireReservations,
+  normaliseName,
+  redrawCandidate,
+  reserveBundle,
+  returnToSelling,
+  startDraw,
+  undoWinner,
+  validateDraft,
+  voidLatestSale,
 } from "./raffle.ts";
 
-type Session = { raffleId: string; sellerId?: string; admin?: boolean; expiresAt: number };
-export type Store = {
-  state: DemoState;
+export type Session = { pinRemembered: true; sellerId?: string; admin?: boolean };
+export type RequestReceipt = { result: string | null; at: number };
+export type AuditEntry = { action: string; at: string; deviceKey: string; targetId?: string };
+
+export type RaffleRuntime = {
+  raffle: Raffle;
   sessions: Record<string, Session>;
-  requests: Record<string, { result: string | null; at: number }>;
+  requests: Record<string, RequestReceipt>;
+  audit: AuditEntry[];
 };
-export type Command = { action: string; raffleId?: string; requestId: string; pin?: string; name?: string; draft?: RaffleDraft; targetId?: string };
+
+export type Command = {
+  action: string;
+  raffleId?: string;
+  requestId: string;
+  pin?: string;
+  name?: string;
+  draft?: RaffleDraft;
+  targetId?: string;
+  confirmDuplicate?: boolean;
+  confirmDelete?: string;
+  entityType?: "organisation" | "venue";
+  entityId?: string;
+};
+
+export class DomainError extends Error {
+  readonly code: string;
+  constructor(message: string, code = "INVALID_COMMAND") {
+    super(message);
+    this.code = code;
+    this.name = "DomainError";
+  }
+}
+
 export const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 
-function hashPin(pin: string) {
+export function hashPin(pin: string) {
   const salt = randomBytes(16).toString("hex");
   return `${salt}:${scryptSync(pin, salt, 32).toString("hex")}`;
 }
 
-function matchesPin(pin: unknown, stored: string) {
+export function matchesPin(pin: unknown, stored: string) {
   if (typeof pin !== "string" || !/^\d{4}$/.test(pin)) return false;
   const [salt, value] = stored.split(":");
   if (!salt || !value) return false;
@@ -29,115 +69,138 @@ function matchesPin(pin: unknown, stored: string) {
 }
 
 function checkedDraft(draft: RaffleDraft | undefined) {
-  if (!draft || typeof draft.name !== "string" || typeof draft.pin !== "string" || !Array.isArray(draft.bundles)) throw new Error("Check the raffle settings.");
+  if (!draft || typeof draft.name !== "string" || typeof draft.pin !== "string" || !Array.isArray(draft.bundles)) throw new DomainError("Check the raffle settings.");
   const error = validateDraft(draft);
-  if (error) throw new Error(error);
+  if (error) throw new DomainError(error);
   return draft;
 }
 
-export function applyCommand(store: Store, key: string, command: Command, at = new Date()): string | null {
-  if (!/^[0-9a-f-]{36}$/i.test(command.requestId)) throw new Error("Invalid request. Refresh and try again.");
+function requirePin(runtime: RaffleRuntime, key: string, pin: unknown) {
+  const existing = runtime.sessions[key];
+  if (existing?.pinRemembered) return existing;
+  if (!matchesPin(pin, runtime.raffle.pin)) throw new DomainError("That PIN does not match this raffle.", "INCORRECT_PIN");
+  const session: Session = { pinRemembered: true };
+  runtime.sessions[key] = session;
+  return session;
+}
+
+export function applyRaffleCommand(
+  runtime: RaffleRuntime,
+  key: string,
+  command: Command,
+  names: { organisationName: string; venueName: string },
+  at = new Date(),
+): string | null {
+  if (!/^[0-9a-f-]{36}$/i.test(command.requestId)) throw new DomainError("Invalid request. Refresh and try again.");
+  if (runtime.raffle.id !== command.raffleId) throw new DomainError("That raffle is no longer available. Return to Raffles.", "RAFFLE_CHANGED");
   const requestKey = `${key}:${command.requestId}`;
-  if (store.requests[requestKey]) return store.requests[requestKey].result;
-  const session = store.sessions[key]?.expiresAt > at.getTime() ? store.sessions[key] : undefined;
-  const raffle = store.state.activeRaffle;
+  if (runtime.requests[requestKey]) return runtime.requests[requestKey].result;
+  const raffle = runtime.raffle;
+  expireReservations(raffle, at);
+  if (raffle.status === "ended") throw new DomainError("This raffle has ended.", "RAFFLE_ENDED");
+
   let result: string | null = null;
-  if (raffle) expireReservations(raffle, at);
-  if (command.action === "create") {
-    if (raffle) throw new Error("A raffle is already active. Finish it before creating another.");
-    const fresh = createRaffle(checkedDraft(command.draft), at);
-    fresh.pin = hashPin(fresh.pin);
-    store.state.activeRaffle = fresh;
-    store.sessions[key] = { raffleId: fresh.id, admin: true, expiresAt: at.getTime() + 30 * 86400000 };
-    result = fresh.id;
-  } else if (command.action === "delete") {
-    if (!store.state.history.some(r => r.id === command.targetId)) throw new Error("This history entry has already been removed.");
-    store.state.history = store.state.history.filter(r => r.id !== command.targetId);
-  } else {
-    if (!raffle || raffle.id !== command.raffleId) throw new Error("The active raffle has changed. Return to the home screen.");
-    if (command.action === "join" || command.action === "admin") {
-      if (!matchesPin(command.pin, raffle.pin)) throw new Error("That PIN does not match the active raffle.");
-      const access: Session = session?.raffleId === raffle.id ? session : { raffleId: raffle.id, expiresAt: at.getTime() + 30 * 86400000 };
-      if (command.action === "admin") access.admin = true;
-      else if (!access.sellerId) {
-        const name = typeof command.name === "string" ? command.name.trim() : "";
-        if (!name || name.length > 60) throw new Error("Enter a seller name (up to 60 characters).");
-        if (raffle.sellers.some(s => s.name.toLocaleLowerCase() === name.toLocaleLowerCase())) throw new Error("That seller name is already being used in this raffle.");
+  if (command.action === "join" || command.action === "admin") {
+    const access = requirePin(runtime, key, command.pin);
+    if (command.action === "admin") access.admin = true;
+    else if (!access.sellerId) {
+      const name = typeof command.name === "string" ? command.name.normalize("NFKC").trim().replace(/\s+/g, " ") : "";
+      if (!name || name.length > 60) throw new DomainError("Enter a seller name (up to 60 characters).");
+      const matching = raffle.sellers.find((seller) => normaliseName(seller.name) === normaliseName(name));
+      if (matching && !command.confirmDuplicate) {
+        throw new DomainError("This name is already used in this raffle. Continue only if you are the same seller; sales and latest-sale void access will be shared.", "DUPLICATE_SELLER");
+      }
+      if (matching) access.sellerId = matching.id;
+      else {
         const seller = { id: `seller_${randomBytes(16).toString("hex")}`, name, joinedAt: at.toISOString() };
         raffle.sellers.push(seller);
         access.sellerId = seller.id;
       }
-      store.sessions[key] = access;
+    }
+  } else {
+    const session = runtime.sessions[key];
+    if (!session?.pinRemembered) throw new DomainError("Enter this raffle’s PIN to continue.", "PIN_REQUIRED");
+    const sellerActions = ["reserve", "print", "cancel", "void"];
+    if (sellerActions.includes(command.action)) {
+      if (!session.sellerId) throw new DomainError("Join as a seller first.");
+      const target = raffle.reservations.find((reservation) => reservation.id === command.targetId);
+      if (command.action !== "reserve" && target?.sellerId !== session.sellerId) throw new DomainError("You can only change sales for this seller identity.");
+      switch (command.action) {
+        case "reserve": result = reserveBundle(raffle, session.sellerId, command.targetId ?? "", at).id; break;
+        case "print":
+          if (raffle.status !== "selling" && target?.status !== "completed") throw new DomainError("Sales are paused.");
+          completePrint(raffle, command.targetId!, at);
+          break;
+        case "cancel": cancelReservation(raffle, command.targetId!); break;
+        case "void": voidLatestSale(raffle, session.sellerId, command.targetId!, at); break;
+      }
     } else {
-      if (!session || session.raffleId !== raffle.id) throw new Error("Enter the raffle PIN to continue.");
-      const sellerActions = ["reserve", "print", "cancel", "void"];
-      if (sellerActions.includes(command.action)) {
-        if (!session.sellerId) throw new Error("Join as a seller first.");
-        const target = raffle.reservations.find(r => r.id === command.targetId);
-        if (command.action !== "reserve" && target?.sellerId !== session.sellerId) throw new Error("You can only change your own sale.");
-        switch (command.action) {
-          case "reserve": result = reserveBundle(raffle, session.sellerId, command.targetId ?? "", at).id; break;
-          case "print":
-            if (raffle.status !== "selling" && target?.status !== "completed") throw new Error("Sales are paused.");
-            completePrint(raffle, command.targetId!, at); break;
-          case "cancel": cancelReservation(raffle, command.targetId!); break;
-          case "void": voidLatestSale(raffle, session.sellerId, command.targetId!, at); break;
+      if (!session.admin) throw new DomainError("Open Admin / Draw first.", "ADMIN_REQUIRED");
+      switch (command.action) {
+        case "edit": {
+          if (raffle.settingsLocked || raffle.status !== "selling") throw new DomainError("Settings are locked after the first completed sale.");
+          if (raffle.reservations.some((reservation) => reservation.status === "active")) throw new DomainError("Wait for unprinted reservations to expire or be cancelled before editing settings.");
+          const draft = checkedDraft(command.draft);
+          raffle.name = draft.name.trim();
+          raffle.pin = hashPin(draft.pin);
+          raffle.organisationId = draft.organisationId;
+          raffle.venueId = draft.venueId;
+          raffle.startingTicket = draft.startingTicket;
+          raffle.highestIssued = draft.startingTicket - 1;
+          raffle.prizeCount = draft.prizeCount;
+          raffle.bundles = draft.bundles.map((bundle, index) => ({ ...bundle, id: `bundle_${index + 1}` }));
+          raffle.reservations = [];
+          break;
         }
-      } else {
-        if (!session.admin) throw new Error("Open Admin with the raffle PIN first.");
-        switch (command.action) {
-          case "edit": {
-            if (raffle.settingsLocked || raffle.status !== "selling") throw new Error("Settings are locked.");
-            if (raffle.reservations.some(r => r.status === "active")) throw new Error("Wait for unprinted reservations to expire or be cancelled before editing settings.");
-            const draft = checkedDraft(command.draft);
-            raffle.name = draft.name.trim();
-            raffle.pin = hashPin(draft.pin);
-            raffle.startingTicket = draft.startingTicket;
-            raffle.highestIssued = draft.startingTicket - 1;
-            raffle.prizeCount = draft.prizeCount;
-            raffle.bundles = draft.bundles.map((b, i) => ({ ...b, id: `bundle_${i + 1}` }));
-            // No completed sale exists; retire only historical, non-live reservations.
-            raffle.reservations = [];
-            break;
-          }
-          case "start": startDraw(raffle, at); break;
-          case "selling": returnToSelling(raffle); break;
-          case "draw": drawCandidate(raffle, undefined, at); break;
-          case "confirm":
-          case "redraw":
-            if (currentCandidate(raffle)?.id !== command.targetId) throw new Error("The candidate changed. Review the current ticket first.");
-            if (command.action === "confirm") confirmWinner(raffle, at);
-            else redrawCandidate(raffle, at);
-            break;
-          case "undo": undoWinner(raffle, command.targetId!, at); break;
-          case "end":
-            endRaffle(raffle, at);
-            store.state.history.unshift(raffle);
-            store.state.activeRaffle = null;
-            result = raffle.id;
-            break;
-          default: throw new Error("Unknown action.");
-        }
+        case "start": startDraw(raffle, at); break;
+        case "selling": returnToSelling(raffle); break;
+        case "draw": drawCandidate(raffle, undefined, at); break;
+        case "confirm":
+        case "redraw":
+          if (currentCandidate(raffle)?.id !== command.targetId) throw new DomainError("The candidate changed. Review the current ticket first.");
+          if (command.action === "confirm") confirmWinner(raffle, at);
+          else redrawCandidate(raffle, at);
+          break;
+        case "undo": undoWinner(raffle, command.targetId!, at); break;
+        case "end":
+          endRaffle(raffle, names.organisationName, names.venueName, at);
+          runtime.sessions = {};
+          result = raffle.id;
+          break;
+        case "delete-active":
+          if (raffle.reservations.some((sale) => Boolean(sale.completedAt)) && command.confirmDelete !== "DELETE") throw new DomainError("Type DELETE to confirm removal of a raffle with completed sales.", "DELETE_CONFIRMATION_REQUIRED");
+          result = raffle.id;
+          break;
+        default: throw new DomainError("Unknown action.");
       }
     }
   }
-  store.requests[requestKey] = { result, at: at.getTime() };
-  // Keep retry receipts for a full day; never replay a sale after a lost response.
-  for (const [id, receipt] of Object.entries(store.requests)) if (receipt.at < at.getTime() - 86400000) delete store.requests[id];
-  for (const [id, access] of Object.entries(store.sessions)) if (access.expiresAt < at.getTime()) delete store.sessions[id];
+
+  runtime.requests[requestKey] = { result, at: at.getTime() };
+  runtime.audit.push({ action: command.action, at: at.toISOString(), deviceKey: key, targetId: command.targetId });
+  if (runtime.audit.length > 5000) runtime.audit.splice(0, runtime.audit.length - 5000);
+  for (const [receiptKey, receipt] of Object.entries(runtime.requests)) if (receipt.at < at.getTime() - 86400000) delete runtime.requests[receiptKey];
   return result;
 }
 
-export function publicState(store: Store, key: string) {
-  const state = structuredClone(store.state);
-  const session = store.sessions[key]?.expiresAt > Date.now() ? store.sessions[key] : undefined;
-  const clean = (raffle: Raffle) => {
-    raffle.pin = "";
-    raffle.sellers = raffle.sellers.filter(s => session?.raffleId === raffle.id && s.id === session.sellerId);
-    expireReservations(raffle);
-  };
-  if (state.activeRaffle) clean(state.activeRaffle);
-  state.history.forEach(clean);
-  state.deviceSellers = session?.sellerId ? { [session.raffleId]: session.sellerId } : {};
-  return { state, adminRaffleId: session?.admin ? session.raffleId : null };
+export function publicRaffle(runtime: RaffleRuntime, key: string, names: { organisationName: string; venueName: string }, at = new Date()) {
+  const raffle = structuredClone(runtime.raffle);
+  raffle.pin = "";
+  expireReservations(raffle, at);
+  if (raffle.status === "ended") {
+    raffle.organisationName = raffle.organisationNameSnapshot ?? names.organisationName;
+    raffle.venueName = raffle.venueNameSnapshot ?? names.venueName;
+    raffle.sellers = [];
+  } else {
+    raffle.organisationName = names.organisationName;
+    raffle.venueName = names.venueName;
+    const sellerId = runtime.sessions[key]?.sellerId;
+    raffle.sellers = sellerId ? raffle.sellers.filter((seller) => seller.id === sellerId) : [];
+  }
+  return raffle;
+}
+
+export function accessFor(runtime: RaffleRuntime, key: string) {
+  const session = runtime.raffle.status === "ended" ? undefined : runtime.sessions[key];
+  return { pinRemembered: Boolean(session?.pinRemembered), admin: Boolean(session?.admin), sellerId: session?.sellerId };
 }

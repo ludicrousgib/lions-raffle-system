@@ -15,7 +15,7 @@ import {
 } from "../lib/raffle.ts";
 
 function setup(startingTicket = 1, prizeCount = 2) {
-  const raffle = createRaffle({ ...defaultDraft, pin: "1234", startingTicket, prizeCount });
+  const raffle = createRaffle({ ...defaultDraft, pin: "1234", organisationId: "org-1", venueId: "venue-1", startingTicket, prizeCount });
   raffle.sellers.push(
     { id: "seller-a", name: "Alex", joinedAt: new Date(0).toISOString() },
     { id: "seller-b", name: "Billie", joinedAt: new Date(0).toISOString() },

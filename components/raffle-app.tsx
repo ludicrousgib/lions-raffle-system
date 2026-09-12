@@ -138,6 +138,12 @@ function RaffleForm({ initial, organisations, venues, submitLabel, onSubmit, onC
   function setBundle(index: number, field: "quantity" | "price", value: number) {
     setDraft((current) => ({ ...current, bundles: current.bundles.map((bundle, bundleIndex) => bundleIndex === index ? { ...bundle, [field]: value } : bundle) }));
   }
+  function addBundle() {
+    setDraft((current) => current.bundles.length >= 10 ? current : { ...current, bundles: [...current.bundles, { quantity: 0, price: 0 }] });
+  }
+  function removeBundle(index: number) {
+    setDraft((current) => current.bundles.length <= 1 ? current : { ...current, bundles: current.bundles.filter((_, bundleIndex) => bundleIndex !== index) });
+  }
   async function quickAdd(type: "organisation" | "venue") {
     const name = window.prompt(`New ${type} name`);
     if (!name?.trim()) return;
@@ -173,8 +179,9 @@ function RaffleForm({ initial, organisations, venues, submitLabel, onSubmit, onC
       </div>
       <label className="field"><span>Number of prizes</span><input type="number" min="1" value={draft.prizeCount || ""} onChange={(event) => setDraft({ ...draft, prizeCount: Number(event.target.value) })} inputMode="numeric" placeholder="Required" /></label>
       <fieldset className="bundle-fieldset">
-        <legend>Ticket bundles</legend><p>Three quick-sale buttons shown to every seller.</p>
-        {draft.bundles.map((bundle, index) => <div className="bundle-input" key={index}><strong>Bundle {index + 1}</strong><label><span>Tickets</span><input type="number" min="1" value={bundle.quantity || ""} onChange={(event) => setBundle(index, "quantity", Number(event.target.value))} inputMode="numeric" /></label><label><span>Price $</span><input type="number" min="0.01" step="0.01" value={bundle.price || ""} onChange={(event) => setBundle(index, "price", Number(event.target.value))} inputMode="decimal" /></label></div>)}
+        <legend>Ticket bundles</legend><p>Choose 1 to 10 quick-sale buttons shown to every seller.</p>
+        {draft.bundles.map((bundle, index) => <div className="bundle-input" key={index}><div className="bundle-input-heading"><strong>Bundle {index + 1}</strong><button type="button" className="bundle-remove" onClick={() => removeBundle(index)} disabled={draft.bundles.length === 1} aria-label={`Remove bundle ${index + 1}`}><Trash2 size={16} /> Remove</button></div><label><span>Tickets</span><input type="number" min="1" value={bundle.quantity || ""} onChange={(event) => setBundle(index, "quantity", Number(event.target.value))} inputMode="numeric" /></label><label><span>Price $</span><input type="number" min="0.01" step="0.01" value={bundle.price || ""} onChange={(event) => setBundle(index, "price", Number(event.target.value))} inputMode="decimal" /></label></div>)}
+        <Button type="button" variant="secondary" className="add-bundle-button" onClick={addBundle} disabled={draft.bundles.length >= 10}><Plus size={18} /> {draft.bundles.length >= 10 ? "Maximum 10 bundles" : "Add ticket bundle"}</Button>
       </fieldset>
       <div className="form-actions"><Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button><Button type="submit">Preview ticket</Button></div>
     </form>

@@ -132,7 +132,7 @@ export function validateDraft(draft: RaffleDraft): string | null {
   if (!/^\d{4}$/.test(draft.pin)) return "PIN must be exactly four digits.";
   if (!Number.isSafeInteger(draft.startingTicket) || draft.startingTicket < 1 || draft.startingTicket > 1000000000) return "Starting ticket must be a whole number from 1 to 1 billion.";
   if (!Number.isInteger(draft.prizeCount) || draft.prizeCount < 1 || draft.prizeCount > 1000) return "Enter between 1 and 1,000 prizes.";
-  if (draft.bundles.length !== 3) return "Exactly three bundles are required.";
+  if (draft.bundles.length < 1 || draft.bundles.length > 10) return "Choose between 1 and 10 ticket bundles.";
   if (draft.bundles.some((bundle) => !bundle || !Number.isInteger(bundle.quantity) || bundle.quantity < 1 || bundle.quantity > 1000 || !Number.isFinite(bundle.price) || bundle.price <= 0 || bundle.price > 10000 || Math.abs(bundle.price * 100 - Math.round(bundle.price * 100)) > 0.00001)) {
     return "Every bundle needs a valid quantity and price.";
   }

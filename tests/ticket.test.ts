@@ -46,3 +46,11 @@ test("cause and website persist through create, edit, public data and sale locki
   raffle.settingsLocked = true;
   assert.throws(() => applyRaffleCommand(runtime, "phone", { ...command, requestId: crypto.randomUUID() }, { organisationName: "Club", venueName: "Hall" }), /locked/);
 });
+
+test("raffles support between one and ten ticket bundles while keeping three defaults", () => {
+  assert.equal(defaultDraft.bundles.length, 3);
+  assert.equal(validateDraft({ ...draft, bundles: [defaultDraft.bundles[0]] }), null);
+  assert.equal(validateDraft({ ...draft, bundles: Array.from({ length: 10 }, (_, index) => ({ quantity: index + 1, price: index + 1 })) }), null);
+  assert.match(validateDraft({ ...draft, bundles: [] }) ?? "", /between 1 and 10/);
+  assert.match(validateDraft({ ...draft, bundles: Array.from({ length: 11 }, () => ({ quantity: 1, price: 1 })) }) ?? "", /between 1 and 10/);
+});

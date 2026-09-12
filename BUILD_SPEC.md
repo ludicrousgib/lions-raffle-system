@@ -99,3 +99,16 @@ A mobile-first web app for running multiple simultaneous in-person Lions raffles
 ## Explicitly out of scope
 
 Tenant authentication, offline selling, payment processing, real printer control, custom bundle quantities at sale time, addresses, app-store distribution and online ticket sales.
+
+## September 2026 ticket enhancement
+
+- Raffle menu uses a one-rem gap between the status card and Join Raffle.
+- Optional cause (250 characters) and website (300 characters) are saved in each raffle's existing JSON payload; no database migration or backfill is needed. They follow existing settings locks and remain in history.
+- Create/edit now includes a required sample-ticket review step with all three bundles selectable. Back preserves unsaved settings; preview never reserves tickets or creates a raffle.
+- One shared ticket renderer displays organisation, event, venue, time, ranges, every individual number, quantity, amount, fundraising text, website and QR.
+- Plain domains default to HTTPS. Only HTTP(S) links without credentials are accepted. QR URLs preserve query parameters/fragments and replace utm_source=raffle, utm_medium=qr, utm_campaign=<event name>. The visible website omits query and fragment. Analytics must be configured on the destination site to report visits; generating/scanning the code is not itself an app analytics event.
+- Epson TM-P20II-801 (C31CJ99801) is Bluetooth. Specification sheet: 58 mm thermal paper, 203 dpi, no auto cutter. Epson technical reference: 48 mm / 384 dots printable width. Receipt uses monochrome, 5 mm side margins, wrapping content, and no clipped scrolling number list. QR has four-module quiet zone, medium error correction and integer dots per module (minimum three), capped at 384 dots.
+- Actual printing remains explicitly simulated. Mixed iOS/Android Bluetooth printing needs an Epson-supported companion/native integration and hardware acceptance testing. Browser print stylesheet assumes a 58 mm roll driver at 100% scale, no browser headers/footers. No claim of hardware compatibility is made from CSS alone.
+- Hardware acceptance: pair each phone platform, verify full ticket and long/non-contiguous numbers, scan QR from paper and inspect tags, confirm tear-off feed, and exercise failed-print/retry without duplicate sales.
+
+References: supplied TM-P20II Specification_Sheet.pdf; https://files.support.epson.com/pdf/pos/bulk/tm-p20ii_trg_en_reve.pdf ; https://github.com/soldair/node-qrcode

@@ -1,3 +1,4 @@
+import { normaliseWebsite, ticketLink, ticketQr } from "./ticket.ts";
 export const DEFAULT_ORGANISATION_NAME = "Lions Club of Green Point - Avoca";
 export const LEGACY_VENUE_NAME = "Not specified";
 export const RESERVATION_MS = 2 * 60 * 1000;
@@ -38,6 +39,8 @@ export type DrawEvent = {
 export type Raffle = {
   id: string;
   name: string;
+  cause?: string;
+  website?: string;
   pin: string;
   organisationId: string;
   venueId: string;
@@ -73,6 +76,8 @@ export type DemoState = AppState;
 
 export type RaffleDraft = {
   name: string;
+  cause?: string;
+  website?: string;
   pin: string;
   organisationId: string;
   venueId: string;
@@ -83,6 +88,8 @@ export type RaffleDraft = {
 
 export const defaultDraft: RaffleDraft = {
   name: "Meat Raffle",
+  cause: "",
+  website: "",
   pin: "",
   organisationId: "",
   venueId: "",
@@ -114,6 +121,10 @@ export function normaliseName(value: string) {
 }
 
 export function validateDraft(draft: RaffleDraft): string | null {
+  if (draft.cause !== undefined && (typeof draft.cause !== "string" || draft.cause.length > 250)) return "Keep the cause under 250 characters.";
+  if (draft.website !== undefined && typeof draft.website !== "string") return "Enter a valid website.";
+  try { const link = ticketLink(draft.website ?? "", draft.name); if (link) ticketQr(link.url); }
+  catch (error) { return error instanceof Error ? error.message : "Enter a valid website."; }
   if (!draft.name.trim()) return "Enter a raffle name.";
   if (draft.name.length > 100) return "Keep the raffle name under 100 characters.";
   if (!draft.organisationId) return "Choose an organisation.";
@@ -134,6 +145,8 @@ export function createRaffle(draft: RaffleDraft, at = new Date(), raffleId = id(
   return {
     id: raffleId,
     name: draft.name.trim(),
+    cause: draft.cause?.trim() ?? "",
+    website: normaliseWebsite(draft.website ?? ""),
     pin: draft.pin,
     organisationId: draft.organisationId,
     venueId: draft.venueId,

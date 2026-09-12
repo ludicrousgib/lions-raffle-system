@@ -1,6 +1,7 @@
 "use client";
 /* eslint-disable react-hooks/refs -- confirmation callbacks execute only from later user events */
 
+import { PrintedTicket } from "./printed-ticket";
 import { createClient } from "@supabase/supabase-js";
 import {
   Archive,
@@ -128,6 +129,9 @@ function RaffleForm({ initial, organisations, venues, submitLabel, onSubmit, onC
 }) {
   const [draft, setDraft] = useState<RaffleDraft>(() => clone(initial));
   const [error, setError] = useState("");
+  const [preview, setPreview] = useState(false);
+  const [previewBundle, setPreviewBundle] = useState(0);
+  const [previewTime] = useState(() => new Date().toISOString());
   const availableOrganisations = organisations.filter((item) => !item.archivedAt || item.id === draft.organisationId);
   const availableVenues = venues.filter((item) => !item.archivedAt || item.id === draft.venueId);
 
@@ -144,8 +148,11 @@ function RaffleForm({ initial, organisations, venues, submitLabel, onSubmit, onC
     event.preventDefault();
     const validation = validateDraft(draft);
     if (validation) { setError(validation); return; }
-    onSubmit(draft);
+    setError("");
+    setPreview(true);
+    window.scrollTo({ top: 0 });
   }
+  if (preview) return <section className="ticket-preview-screen form-stack"><h2>Preview your ticket</h2><Notice>Sample ticket on 58 mm paper. Review the wording and QR code before saving.</Notice><label className="field"><span>Preview bundle</span><select value={previewBundle} onChange={(event) => setPreviewBundle(Number(event.target.value))}>{draft.bundles.map((bundle, index) => <option key={index} value={index}>{bundle.quantity} tickets for {formatMoney(bundle.price)}</option>)}</select></label><PrintedTicket name={draft.name} organisationName={organisations.find((item) => item.id === draft.organisationId)?.name ?? ""} venueName={venues.find((item) => item.id === draft.venueId)?.name ?? ""} cause={draft.cause} website={draft.website} numbers={Array.from({ length: draft.bundles[previewBundle].quantity }, (_, index) => draft.startingTicket + index)} amount={draft.bundles[previewBundle].price} time={previewTime} sample /><div className="form-actions"><Button variant="secondary" onClick={() => setPreview(false)}>Back to settings</Button><Button onClick={() => onSubmit(draft)}>{submitLabel}</Button></div></section>;
   return (
     <form className="form-stack" onSubmit={submit}>
       {error && <Notice tone="warning">{error}</Notice>}
@@ -158,6 +165,8 @@ function RaffleForm({ initial, organisations, venues, submitLabel, onSubmit, onC
         <label className="field"><span>Venue</span><select value={draft.venueId} onChange={(event) => setDraft({ ...draft, venueId: event.target.value })}><option value="">Choose venue</option>{availableVenues.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
         <button type="button" className="inline-add" onClick={() => void quickAdd("venue")}><Plus size={16} /> Add venue</button>
       </div>
+      <label className="field"><span>Fundraising cause (optional)</span><input maxLength={250} value={draft.cause ?? ""} onChange={(event) => setDraft({ ...draft, cause: event.target.value })} placeholder="e.g. local community projects" /></label>
+      <label className="field"><span>Website (optional)</span><input maxLength={300} inputMode="url" value={draft.website ?? ""} onChange={(event) => setDraft({ ...draft, website: event.target.value })} placeholder="e.g. freetradeday.com.au" /><small>The QR code includes tracking for this raffle. The printed website has no tracking tags.</small></label>
       <div className="field-row">
         <label className="field"><span>4-digit PIN</span><input value={draft.pin} onChange={(event) => setDraft({ ...draft, pin: event.target.value.replace(/\D/g, "").slice(0, 4) })} inputMode="numeric" autoComplete="off" placeholder="••••" /></label>
         <label className="field"><span>Starting ticket</span><input type="number" min="1" value={draft.startingTicket || ""} onChange={(event) => setDraft({ ...draft, startingTicket: Number(event.target.value) })} inputMode="numeric" /></label>
@@ -167,7 +176,7 @@ function RaffleForm({ initial, organisations, venues, submitLabel, onSubmit, onC
         <legend>Ticket bundles</legend><p>Three quick-sale buttons shown to every seller.</p>
         {draft.bundles.map((bundle, index) => <div className="bundle-input" key={index}><strong>Bundle {index + 1}</strong><label><span>Tickets</span><input type="number" min="1" value={bundle.quantity || ""} onChange={(event) => setBundle(index, "quantity", Number(event.target.value))} inputMode="numeric" /></label><label><span>Price $</span><input type="number" min="0.01" step="0.01" value={bundle.price || ""} onChange={(event) => setBundle(index, "price", Number(event.target.value))} inputMode="decimal" /></label></div>)}
       </fieldset>
-      <div className="form-actions"><Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button><Button type="submit">{submitLabel}</Button></div>
+      <div className="form-actions"><Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button><Button type="submit">Preview ticket</Button></div>
     </form>
   );
 }
@@ -295,7 +304,7 @@ export function RaffleApp() {
 
   function renderRaffleMenu() {
     if (!raffle || !stats) return renderHome();
-    return <><Header eyebrow="Active raffle" title={raffle.name} onBack={goHome} action={<StatusPill status={raffle.status} />} /><main className="page">
+    return <><Header eyebrow="Active raffle" title={raffle.name} onBack={goHome} action={<StatusPill status={raffle.status} />} /><main className="page raffle-menu-page">
       <section className="active-card"><RaffleIdentity raffle={raffle} /><div className="active-total"><strong>{stats.totalTickets.toLocaleString()}</strong><span>valid tickets sold</span></div><small>Expected sales {formatMoney(stats.expectedRevenue)}</small></section>
       <section className="action-stack"><button className="path-card seller-path" onClick={() => setScreen(deviceSeller ? "seller" : "join")}><span className="path-icon"><Ticket size={25} /></span><span><strong>{deviceSeller ? `Continue as ${deviceSeller.name}` : "Join Raffle"}</strong><small>Sell ticket bundles</small></span><ChevronRight size={22} /></button><button className="path-card admin-path" onClick={() => void openAdmin()}><span className="path-icon"><Trophy size={25} /></span><span><strong>Admin / Draw</strong><small>Stats, settings and prizes</small></span><ChevronRight size={22} /></button></section>
       <Button className="wide-button" variant="ghost" onClick={goHome}><ArrowLeft size={18} /> Back to Raffles</Button>
@@ -304,7 +313,7 @@ export function RaffleApp() {
 
   function renderCreate(editing = false) {
     const defaultOrganisation = state.organisations.find((item) => !item.archivedAt && item.name === DEFAULT_ORGANISATION_NAME) ?? state.organisations.find((item) => !item.archivedAt);
-    const initial: RaffleDraft = editing && raffle ? { name: raffle.name, pin: "", organisationId: raffle.organisationId, venueId: raffle.venueId, startingTicket: raffle.startingTicket, prizeCount: raffle.prizeCount, bundles: raffle.bundles.map(({ quantity, price }) => ({ quantity, price })) } : { ...clone(defaultDraft), organisationId: defaultOrganisation?.id ?? "", venueId: "" };
+    const initial: RaffleDraft = editing && raffle ? { name: raffle.name, cause: raffle.cause ?? "", website: raffle.website ?? "", pin: "", organisationId: raffle.organisationId, venueId: raffle.venueId, startingTicket: raffle.startingTicket, prizeCount: raffle.prizeCount, bundles: raffle.bundles.map(({ quantity, price }) => ({ quantity, price })) } : { ...clone(defaultDraft), organisationId: defaultOrganisation?.id ?? "", venueId: "" };
     const save = async (draft: RaffleDraft, continueSameVenue = false) => {
       try {
         const data = await send(editing ? "edit" : "create", { draft, confirmDuplicate: continueSameVenue });
@@ -356,7 +365,7 @@ export function RaffleApp() {
     const isCompleted = reservation.status === "completed";
     const seconds = Math.max(0, Math.ceil((new Date(reservation.expiresAt).getTime() - now) / 1000));
     const ticketTime = reservation.completedAt ?? reservation.createdAt;
-    return <><Header eyebrow={isCompleted ? "Sale complete" : "Reserved"} title="Customer ticket" onBack={isCompleted ? () => setScreen("seller") : undefined} action={isActive ? <span className="countdown"><Clock3 size={15} /> {Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, "0")}</span> : undefined} /><main className="page ticket-page">{!isActive && !isCompleted && <Notice tone="warning">This ticket is {reservation.status}. Its numbers are no longer valid for this purchase.</Notice>}<article className="paper-ticket"><div className="ticket-top"><span>{raffle.organisationName}</span><h2>{raffle.name}</h2><div className="ticket-venue">{raffle.venueName}</div><time>{formatDateTime(ticketTime)}</time></div><div className="ticket-range"><span>Your tickets</span><strong>{formatRanges(reservation.ticketNumbers)}</strong></div><div className="ticket-numbers" aria-label="Individual ticket numbers">{reservation.ticketNumbers.map((ticketNumber) => <span key={ticketNumber}>{ticketNumber}</span>)}</div><div className="ticket-purchase"><div><strong>{reservation.quantity}</strong><span>tickets</span></div><div><strong>{formatMoney(reservation.amount)}</strong><span>paid</span></div></div><p>Thanks for your support!</p></article>{isActive && <Notice tone="warning"><strong>Not sold yet.</strong> Printing completes and locks this sale.</Notice>}{isCompleted && <Notice tone="success"><Check size={18} /> Printed successfully · sale locked</Notice>}<div className="ticket-actions">{isActive && <Button variant="secondary" onClick={() => void run("cancel", { targetId: reservation.id }, () => setScreen("seller"))}><X size={18} /> Cancel</Button>}{(isActive || isCompleted) && <Button onClick={() => void run("print", { targetId: reservation.id }, () => setToast(isCompleted ? "Reprint simulated." : "Print simulated — sale completed."))}><Printer size={19} /> {isCompleted ? "Reprint" : "Print"}</Button>}{!isActive && !isCompleted && <Button onClick={() => setScreen("seller")}>Back to selling</Button>}</div>{isCompleted && <Button className="done-button" variant="secondary" onClick={() => setScreen("seller")}>Done</Button>}{isActive && <Button variant="ghost" onClick={() => setToast("Print failed (simulation). The reservation stays active for retry until its timer ends.")}>Simulate failed print</Button>}</main></>;
+    return <><Header eyebrow={isCompleted ? "Sale complete" : "Reserved"} title="Customer ticket" onBack={isCompleted ? () => setScreen("seller") : undefined} action={isActive ? <span className="countdown"><Clock3 size={15} /> {Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, "0")}</span> : undefined} /><main className="page ticket-page">{!isActive && !isCompleted && <Notice tone="warning">This ticket is {reservation.status}. Its numbers are no longer valid for this purchase.</Notice>}<PrintedTicket name={raffle.name} organisationName={raffle.organisationName} venueName={raffle.venueName} cause={raffle.cause} website={raffle.website} numbers={reservation.ticketNumbers} amount={reservation.amount} time={ticketTime} invalid={!isActive && !isCompleted} />{isActive && <Notice tone="warning"><strong>Not sold yet.</strong> Printing completes and locks this sale.</Notice>}{isCompleted && <Notice tone="success"><Check size={18} /> Print simulated · sale locked</Notice>}<div className="ticket-actions">{isActive && <Button variant="secondary" onClick={() => void run("cancel", { targetId: reservation.id }, () => setScreen("seller"))}><X size={18} /> Cancel</Button>}{(isActive || isCompleted) && <Button onClick={() => void run("print", { targetId: reservation.id }, () => setToast(isCompleted ? "Reprint simulated." : "Print simulated — sale completed."))}><Printer size={19} /> {isCompleted ? "Reprint" : "Print"}</Button>}{!isActive && !isCompleted && <Button onClick={() => setScreen("seller")}>Back to selling</Button>}</div>{isCompleted && <Button className="done-button" variant="secondary" onClick={() => setScreen("seller")}>Done</Button>}{isActive && <Button variant="ghost" onClick={() => setToast("Print failed (simulation). The reservation stays active for retry until its timer ends.")}>Simulate failed print</Button>}</main></>;
   }
 
   function requestActiveDelete() {

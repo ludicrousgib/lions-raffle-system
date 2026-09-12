@@ -1,3 +1,4 @@
+import { normaliseWebsite } from "./ticket.ts";
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import {
   type Raffle,
@@ -142,6 +143,8 @@ export function applyRaffleCommand(
           if (raffle.reservations.some((reservation) => reservation.status === "active")) throw new DomainError("Wait for unprinted reservations to expire or be cancelled before editing settings.");
           const draft = checkedDraft(command.draft);
           raffle.name = draft.name.trim();
+          raffle.cause = draft.cause?.trim() ?? "";
+          raffle.website = normaliseWebsite(draft.website ?? "");
           raffle.pin = hashPin(draft.pin);
           raffle.organisationId = draft.organisationId;
           raffle.venueId = draft.venueId;

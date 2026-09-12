@@ -166,7 +166,7 @@ function RaffleForm({ initial, organisations, venues, submitLabel, onSubmit, onC
         <button type="button" className="inline-add" onClick={() => void quickAdd("venue")}><Plus size={16} /> Add venue</button>
       </div>
       <label className="field"><span>Fundraising cause (optional)</span><input maxLength={250} value={draft.cause ?? ""} onChange={(event) => setDraft({ ...draft, cause: event.target.value })} placeholder="e.g. local community projects" /></label>
-      <label className="field"><span>Website (optional)</span><input maxLength={300} inputMode="url" value={draft.website ?? ""} onChange={(event) => setDraft({ ...draft, website: event.target.value })} placeholder="e.g. freetradeday.com.au" /><small>The QR code includes tracking for this raffle. The printed website has no tracking tags.</small></label>
+      <label className="field"><span>Website (optional)</span><input maxLength={300} inputMode="url" value={draft.website ?? ""} onChange={(event) => setDraft({ ...draft, website: event.target.value })} placeholder="e.g. freetradeday.com.au" /></label>
       <div className="field-row">
         <label className="field"><span>4-digit PIN</span><input value={draft.pin} onChange={(event) => setDraft({ ...draft, pin: event.target.value.replace(/\D/g, "").slice(0, 4) })} inputMode="numeric" autoComplete="off" placeholder="••••" /></label>
         <label className="field"><span>Starting ticket</span><input type="number" min="1" value={draft.startingTicket || ""} onChange={(event) => setDraft({ ...draft, startingTicket: Number(event.target.value) })} inputMode="numeric" /></label>

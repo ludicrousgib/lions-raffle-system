@@ -118,11 +118,12 @@ function StrongDeleteDialog({ raffle, onClose, onDelete }: { raffle: Raffle | nu
   );
 }
 
-function RaffleForm({ initial, organisations, venues, submitLabel, onSubmit, onCancel, onAddEntity }: {
+function RaffleForm({ initial, organisations, venues, submitLabel, requirePin = true, onSubmit, onCancel, onAddEntity }: {
   initial: RaffleDraft;
   organisations: Organisation[];
   venues: Venue[];
   submitLabel: string;
+  requirePin?: boolean;
   onSubmit: (draft: RaffleDraft) => void;
   onCancel: () => void;
   onAddEntity: (type: "organisation" | "venue", name: string) => Promise<string | null>;
@@ -152,7 +153,7 @@ function RaffleForm({ initial, organisations, venues, submitLabel, onSubmit, onC
   }
   function submit(event: FormEvent) {
     event.preventDefault();
-    const validation = validateDraft(draft);
+    const validation = validateDraft(draft, { requirePin });
     if (validation) { setError(validation); return; }
     setError("");
     setPreview(true);
@@ -174,7 +175,7 @@ function RaffleForm({ initial, organisations, venues, submitLabel, onSubmit, onC
       <label className="field"><span>Fundraising cause (optional)</span><input maxLength={250} value={draft.cause ?? ""} onChange={(event) => setDraft({ ...draft, cause: event.target.value })} placeholder="e.g. local community projects" /></label>
       <label className="field"><span>Website (optional)</span><input maxLength={300} inputMode="url" value={draft.website ?? ""} onChange={(event) => setDraft({ ...draft, website: event.target.value })} placeholder="e.g. freetradeday.com.au" /></label>
       <div className="field-row">
-        <label className="field"><span>4-digit PIN</span><input value={draft.pin} onChange={(event) => setDraft({ ...draft, pin: event.target.value.replace(/\D/g, "").slice(0, 4) })} inputMode="numeric" autoComplete="off" placeholder="••••" /></label>
+        <label className="field"><span>{requirePin ? "4-digit PIN" : "4-digit PIN (leave blank to keep current)"}</span><input value={draft.pin} onChange={(event) => setDraft({ ...draft, pin: event.target.value.replace(/\D/g, "").slice(0, 4) })} inputMode="numeric" autoComplete="off" placeholder={requirePin ? "••••" : "Unchanged"} /></label>
         <label className="field"><span>Starting ticket</span><input type="number" min="1" value={draft.startingTicket || ""} onChange={(event) => setDraft({ ...draft, startingTicket: Number(event.target.value) })} inputMode="numeric" /></label>
       </div>
       <label className="field"><span>Number of prizes</span><input type="number" min="1" value={draft.prizeCount || ""} onChange={(event) => setDraft({ ...draft, prizeCount: Number(event.target.value) })} inputMode="numeric" placeholder="Required" /></label>
@@ -331,7 +332,7 @@ export function RaffleApp() {
         else { const message = error instanceof Error ? error.message : "Could not save the raffle."; setFormError(message); setToast(message); }
       }
     };
-    return <><Header eyebrow={editing ? raffle?.name : "New raffle"} title={editing ? "Edit settings" : "Create raffle"} onBack={() => editing ? setScreen("admin") : goHome()} /><main className="page form-page">{formError && <Notice tone="warning">{formError}</Notice>}<RaffleForm key={editing ? raffle?.id : "new"} initial={initial} organisations={state.organisations} venues={state.venues} submitLabel={editing ? "Save settings" : "Create raffle"} onCancel={() => editing ? setScreen("admin") : goHome()} onSubmit={(draft) => void save(draft)} onAddEntity={quickAddEntity} /></main></>;
+    return <><Header eyebrow={editing ? raffle?.name : "New raffle"} title={editing ? "Edit settings" : "Create raffle"} onBack={() => editing ? setScreen("admin") : goHome()} /><main className="page form-page">{formError && <Notice tone="warning">{formError}</Notice>}<RaffleForm key={editing ? raffle?.id : "new"} initial={initial} organisations={state.organisations} venues={state.venues} submitLabel={editing ? "Save settings" : "Create raffle"} requirePin={!editing} onCancel={() => editing ? setScreen("admin") : goHome()} onSubmit={(draft) => void save(draft)} onAddEntity={quickAddEntity} /></main></>;
   }
 
   function renderJoin(admin = false) {

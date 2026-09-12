@@ -69,9 +69,9 @@ export function matchesPin(pin: unknown, stored: string) {
   return expected.length === 32 && timingSafeEqual(scryptSync(pin, salt, 32), expected);
 }
 
-function checkedDraft(draft: RaffleDraft | undefined) {
+function checkedDraft(draft: RaffleDraft | undefined, options?: { requirePin?: boolean }) {
   if (!draft || typeof draft.name !== "string" || typeof draft.pin !== "string" || !Array.isArray(draft.bundles)) throw new DomainError("Check the raffle settings.");
-  const error = validateDraft(draft);
+  const error = validateDraft(draft, options);
   if (error) throw new DomainError(error);
   return draft;
 }
@@ -141,11 +141,11 @@ export function applyRaffleCommand(
         case "edit": {
           if (raffle.settingsLocked || raffle.status !== "selling") throw new DomainError("Settings are locked after the first completed sale.");
           if (raffle.reservations.some((reservation) => reservation.status === "active")) throw new DomainError("Wait for unprinted reservations to expire or be cancelled before editing settings.");
-          const draft = checkedDraft(command.draft);
+          const draft = checkedDraft(command.draft, { requirePin: false });
           raffle.name = draft.name.trim();
           raffle.cause = draft.cause?.trim() ?? "";
           raffle.website = normaliseWebsite(draft.website ?? "");
-          raffle.pin = hashPin(draft.pin);
+          if (draft.pin) raffle.pin = hashPin(draft.pin);
           raffle.organisationId = draft.organisationId;
           raffle.venueId = draft.venueId;
           raffle.startingTicket = draft.startingTicket;

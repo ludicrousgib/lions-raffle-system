@@ -112,6 +112,16 @@ test("organisation and venue names snapshot at end while active names stay live"
   assert.deepEqual(runtime.sessions, {});
 });
 
+test("editing settings without retyping the PIN keeps the original PIN", () => {
+  const { runtime, run } = setup("raffle-edit-keep-pin");
+  run("admin", "admin", { pin: "1234" });
+  assert.throws(() => run("admin", "edit", { draft: { ...defaultDraft, pin: "12", organisationId: "org-1", venueId: "venue-1", prizeCount: 2 } }), /four digits/);
+  run("admin", "edit", { draft: { ...defaultDraft, pin: "", organisationId: "org-1", venueId: "venue-1", prizeCount: 2 } });
+  assert.equal(runtime.raffle.prizeCount, 2);
+  run("other-admin", "admin", { pin: "1234" });
+  assert.equal(runtime.sessions["other-admin"].admin, true);
+});
+
 test("settings including organisation and venue lock after the first completed sale", () => {
   const { run } = setup("raffle-locked");
   run("seller", "join", { pin: "1234", name: "Morgan" });

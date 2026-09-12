@@ -120,7 +120,8 @@ export function normaliseName(value: string) {
   return value.normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase("en-AU");
 }
 
-export function validateDraft(draft: RaffleDraft): string | null {
+export function validateDraft(draft: RaffleDraft, options?: { requirePin?: boolean }): string | null {
+  const requirePin = options?.requirePin ?? true;
   if (draft.cause !== undefined && (typeof draft.cause !== "string" || draft.cause.length > 250)) return "Keep the cause under 250 characters.";
   if (draft.website !== undefined && typeof draft.website !== "string") return "Enter a valid website.";
   try { const link = ticketLink(draft.website ?? "", draft.name); if (link) ticketQr(link.url); }
@@ -129,7 +130,7 @@ export function validateDraft(draft: RaffleDraft): string | null {
   if (draft.name.length > 100) return "Keep the raffle name under 100 characters.";
   if (!draft.organisationId) return "Choose an organisation.";
   if (!draft.venueId) return "Choose a venue.";
-  if (!/^\d{4}$/.test(draft.pin)) return "PIN must be exactly four digits.";
+  if ((draft.pin || requirePin) && !/^\d{4}$/.test(draft.pin)) return "PIN must be exactly four digits.";
   if (!Number.isSafeInteger(draft.startingTicket) || draft.startingTicket < 1 || draft.startingTicket > 1000000000) return "Starting ticket must be a whole number from 1 to 1 billion.";
   if (!Number.isInteger(draft.prizeCount) || draft.prizeCount < 1 || draft.prizeCount > 1000) return "Enter between 1 and 1,000 prizes.";
   if (draft.bundles.length < 1 || draft.bundles.length > 10) return "Choose between 1 and 10 ticket bundles.";
